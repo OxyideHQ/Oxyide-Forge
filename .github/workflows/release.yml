@@ -1,0 +1,129 @@
+# Oxyide Forge — release pipeline.
+#
+# Tag-gated release: pushing a tag `vX.Y.Z` re-runs EVERY blocking gate,
+# then packages the customer ZIP, validates the release trio
+# (ZIP + SBOM + evidence), and publishes a GitHub Release with those files
+# attached. Any gate failure stops the release (no continue-on-error,
+# no `|| true` anywhere in this file).
+#
+# Trust boundary: tags are trusted refs — releases publish ONLY from `v*`
+# tags, and this workflow never runs on pull_request, so untrusted fork
+# code cannot reach it. The sole credential is the ephemeral GITHUB_TOKEN
+# (least privilege: contents:write for release creation, scoped to this
+# workflow file). No custom release credentials exist (no npm publishing:
+# this package is private; the artifact is the customer ZIP).
+#
+# Third-party actions are SHA-pinned (versions in comments); see
+# (documented in docs/release-contract.md)
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  DATABASE_URL: postgresql://test:test@localhost:5432/oxyide_test
+  JWT_SECRET: test-jwt-secret-key-min-32-chars-long
+  NODE_ENV: test
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: oxyide_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d oxyide_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Deterministic install
+        run: npm ci
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          GITLEAKS_VERSION=8.30.1
+          curl -sL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sL -o /tmp/gitleaks-checksums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd /tmp && grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks-checksums.txt | sha256sum -c -)
+          tar xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+
+      - name: Dependency audit (blocking, production scope)
+        run: npm run security:dependencies
+
+      - name: Secret scan (blocking)
+        run: npm run security:secrets
+
+      - name: SAST (blocking)
+        run: npm run security:sast
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests (live PostgreSQL)
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Architecture check
+        run: npm run architecture:check
+
+      - name: SBOM generate + validate
+        run: npm run security:sbom
+
+      - name: Package customer ZIP
+        run: bash scripts/package.sh
+
+      - name: Release validation (version, contents, SBOM, evidence)
+        run: node scripts/release-validate.cjs --tag "${{ github.ref_name }}"
+
+      - name: Upload release trio
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: |
+            /tmp/oxyide-forge-v*.zip
+            sbom.cyclonedx.json
+            release-evidence.json
+          retention-days: 90
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          gh release create "${{ github.ref_name }}" \
+            --title "oxyide-forge v${VERSION}" \
+            --notes "Release evidence: see attached release-evidence.json (revision, toolchain, lockfile/SBOM hashes, gate record)." \
+            /tmp/oxyide-forge-v*.zip sbom.cyclonedx.json release-evidence.json

@@ -1,0 +1,213 @@
+{
+  "uid": "oxyide-forge-http",
+  "title": "Oxyide Forge — HTTP Service Overview",
+  "description": "Request rate, error rate, latency, and status distribution from Forge's bounded Prometheus metrics (METRICS_ENABLED=true). Labels method/route/status only; route is a Fastify template, never a raw URL.",
+  "tags": [
+    "oxyide",
+    "forge",
+    "fastify",
+    "http",
+    "observability"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate",
+      "type": "timeseries",
+      "description": "Per-second completed-request rate, grouped by route template and status. A flat zero means no traffic, not necessarily health — check error rate alongside.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum by (route, status) (rate(forge_http_requests_total[5m]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "{{route}} {{status}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "showLegend": true,
+          "calcs": []
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "HTTP error rate (5xx)",
+      "type": "timeseries",
+      "description": "Per-second 5xx rate. forge_http_errors_total increments only for status >= 500 (telemetry plugin); 4xx responses are client errors and are NOT counted here — see status distribution for the full mix.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (route, status) (rate(forge_http_errors_total[5m]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "{{route}} {{status}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "showLegend": true,
+          "calcs": []
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Request latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "description": "Estimated latency quantiles from the fixed-bucket histogram (14 edges, 5ms–10s). Quantiles are estimates derived from bucket counts, not exact measurements.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (route, le) (rate(forge_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "p50 {{route}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (route, le) (rate(forge_http_request_duration_seconds_bucket[5m])))",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "p95 {{route}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (route, le) (rate(forge_http_request_duration_seconds_bucket[5m])))",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "p99 {{route}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "HTTP status distribution",
+      "type": "piechart",
+      "description": "Share of completed responses by status code over the selected window. Includes 2xx, 4xx, and 5xx — use alongside the 5xx-only error rate panel.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (forge_http_requests_total)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "showLegend": true,
+          "calcs": []
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Request volume by method and route",
+      "type": "table",
+      "description": "Total completed requests grouped by method and route template. Route values are normalized Fastify templates (or 'unknown'), never raw URLs.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "expr": "sum by (method, route) (forge_http_requests_total)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
+    }
+  ],
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  }
+}

@@ -1,0 +1,41 @@
+# Build context exclusions (M9.5).
+#
+# `.env` is the critical entry: without it a developer's DATABASE_URL, JWT
+# secret, and REDIS_URL would be sent into the build context and could be baked
+# into an image layer. Configuration is supplied at run time, never at build
+# time.
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Version control and CI
+.git
+.gitignore
+.github
+.gitleaks.toml
+
+# Dependencies and build output — both are produced inside the image
+node_modules
+dist
+
+# Tests, caches, and coverage (never needed at run time)
+coverage
+.vitest
+*.tsbuildinfo
+
+# Local Docker state
+docker-data
+
+# Documentation, audits, and milestone records
+docs
+
+# Editor and OS noise
+.vscode
+.idea
+.DS_Store
+
+# Logs and temporary files
+*.log
+npm-debug.log*

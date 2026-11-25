@@ -1,0 +1,117 @@
+# Oxyide Forge — local deployment verification stack (M9.5).
+#
+# This file exists to *verify* the container lifecycle, not to be a production
+# orchestrator definition. It deliberately declares no credential literals: every
+# secret is interpolated from the operator's environment, so this file can be
+# committed without leaking anything.
+#
+#   cp .env.example .env      # then set DATABASE_URL and JWT_SECRET
+#   docker compose up --build
+#
+# Required environment (no defaults, so a missing value fails loudly rather than
+# silently starting with a guess):
+#   DATABASE_URL       full PostgreSQL URL, including credentials
+#   JWT_SECRET         >= 32 characters
+#   POSTGRES_PASSWORD  password for the bundled database container
+#
+# If DATABASE_URL already points at an external PostgreSQL, delete the
+# `postgres` service and its `depends_on` entry.
+#
+# Two different hosts, on purpose (M131-F05):
+#   - The app container reaches the bundled database over the compose network at
+#     `postgres:5432`.
+#   - Host-side tools (psql, `npx prisma migrate deploy`, the test suite) reach
+#     the same database through the published port at `127.0.0.1:5433`.
+# `.env.example` uses the host-side form, which is correct for the commands in
+# docs/development.md. When running the APPLICATION in this stack, point
+# DATABASE_URL at the compose-network host instead:
+#
+#   DATABASE_URL=postgresql://forge:<POSTGRES_PASSWORD>@postgres:5432/oxyide_starter
+#
+# `postgres:5432` is unreachable from the host, and `127.0.0.1:5433` is
+# unreachable from inside a container. Using one for both is the mistake this
+# note exists to prevent.
+
+services:
+  postgres:
+    # PostgreSQL 17, matching the documented minimum in README.md, §2 of
+    # docs/development.md, and the prerequisites table in docs/deployment.md.
+    # M131-F06: this was `postgres:16-alpine`, i.e. a version BELOW the minimum
+    # the project documents, so the shipped verification stack contradicted the
+    # stated requirement.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-forge}
+      POSTGRES_DB: ${POSTGRES_DB:-oxyide_starter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    # M131-F05: publish the host port. Without it the bundled database was
+    # reachable ONLY on the compose network, so `cp .env.example .env` followed
+    # by `docker compose up --build` pointed the application at
+    # 127.0.0.1:5433 — which, inside the app container, is the app itself, not
+    # PostgreSQL. The stack therefore never became ready. Host-side tooling
+    # (`npx prisma migrate deploy`, psql, the test suite) also needs this.
+    #
+    # Host port 5433 by default: it matches .env.example and avoids colliding
+    # with a host PostgreSQL on the standard 5432. Override with
+    # POSTGRES_HOST_PORT.
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    # Readiness for the *database* container. The application waits on this, so
+    # it never reports "not ready" merely because PostgreSQL is still booting.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-forge} -d ${POSTGRES_DB:-oxyide_starter}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Named volume, never a tmpfs: data must survive `docker compose down`.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      # Optional Redis is deliberately NOT given a `${REDIS_URL:-}` default.
+      # An unset variable with a `:-` default expands to an EMPTY STRING, and
+      # the validated configuration layer treats `REDIS_URL=""` as a
+      # configuration error rather than as "not configured" (M9.3) — so that
+      # form would stop the container from starting for anyone who has not set
+      # a Redis URL. To enable Redis, add it in an override file:
+      #
+      #   # docker-compose.override.yml
+      #   services:
+      #     app:
+      #       environment:
+      #         REDIS_URL: redis://redis:6379
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    # Wait for PostgreSQL to report healthy before starting. Without this the
+    # application would come up first and correctly report 503 until the
+    # database finished initializing — technically accurate, but a false alarm
+    # during every cold start.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Forward SIGTERM to Node as PID 1 so the graceful-shutdown path runs:
+    # readiness withdraws first, then the listener closes, then Prisma and Redis
+    # disconnect. Without this, a container stop would SIGKILL the process and
+    # skip draining entirely.
+    init: true
+    # Long enough for in-flight requests to finish. The application stops
+    # accepting new work as soon as it receives SIGTERM, so this only has to
+    # cover requests already running.
+    stop_grace_period: 30s
+    restart: unless-stopped
+    # The image's own HEALTHCHECK applies; it is not overridden here, so the
+    # verified definition in the Dockerfile is the one that runs.
+
+volumes:
+  postgres-data:

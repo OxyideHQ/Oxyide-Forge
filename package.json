@@ -1,0 +1,94 @@
+{
+  "name": "oxyide-forge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Oxyide Forge is a production-ready TypeScript backend foundation for building secure, maintainable applications.",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "lint": "eslint . --ext .ts",
+    "architecture:check": "node scripts/architecture-check.cjs",
+    "policy:docs": "node scripts/policy-docs.test.cjs",
+    "check": "npm run typecheck && npm run lint && npm run architecture:check",
+    "validate": "npm run security:all && npx prisma migrate status && npm run security:sbom && npm run release:check && npm run verify:deployment",
+    "security:dependencies": "npm audit --omit=dev",
+    "security:secrets": "gitleaks detect --source . --config .gitleaks.toml --no-banner",
+    "security:sast": "node scripts/security-scan.cjs",
+    "security:sbom": "npx --yes --package @cyclonedx/cyclonedx-npm@6.0.1 cyclonedx-npm --package-lock-only --output-format json --output-reproducible --output-file sbom.cyclonedx.json package.json && node scripts/sbom-validate.cjs",
+    "security:all": "npm run security:dependencies && npm run security:secrets && npm run security:sast && npm run typecheck && npm run lint && npm test && npm run build && npm run architecture:check",
+    "release:check": "node scripts/release-validate.cjs",
+    "verify:deployment": "node scripts/verify-deployment.cjs",
+    "smoke": "node scripts/smoke.cjs",
+    "dashboards": "node scripts/generate-dashboards.cjs",
+    "db:seed": "tsx prisma/seed.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"*.{js,json,md}\"",
+    "setup": "node scripts/setup.mjs"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "semi": true,
+    "trailingComma": "all",
+    "printWidth": 100
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/cors": "^11.0.0",
+    "@fastify/jwt": "^10.2.2",
+    "@fastify/swagger": "^9.9.1",
+    "@fastify/swagger-ui": "^6.1.1",
+    "@prisma/client": "6.12.0",
+    "bcrypt": "^6.0.0",
+    "fastify": "^5.1.0",
+    "fastify-plugin": "^6.0.0",
+    "ioredis": "^6.0.0",
+    "nodemailer": "10.0.15",
+    "pino": "^9.3.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "^13.1.0",
+    "@eslint/js": "^9.17.0",
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "2.1.9",
+    "ajv": "^8.20.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "husky": "9.1.7",
+    "prettier": "^3.3.0",
+    "prisma": "6.12.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "bugs": {
+    "url": "https://www.oxyide.com/support"
+  },
+  "homepage": "https://www.oxyide.com/",
+  "keywords": [
+    "fastify",
+    "prisma",
+    "postgresql",
+    "api",
+    "forge",
+    "jwt",
+    "rbac",
+    "typescript"
+  ],
+  "author": "Oxyide",
+  "license": "MIT",
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

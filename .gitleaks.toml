@@ -1,0 +1,23 @@
+# Oxyide Forge — gitleaks configuration.
+#
+# Extends the default rule set with a narrow, reviewed allowlist ONLY.
+# Each entry pins an exact known-synthetic value AND the file shape it may
+# appear in. Never add broad path exclusions (*.ts, src/**, tests) or
+# whole-history skips to silence the scanner.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Self-describing placeholder in .env.example (literally instructs replacement; not a credential)"
+regexes = ['''replace-with-at-least-32-characters''']
+paths = ['''^\.env\.example$''']
+
+[[allowlists]]
+description = "Published test-only JWT fixture used as the test-env fallback across *.test.ts (production placeholder differs; production requires a real secret)"
+regexes = ['''test-jwt-secret-key-min-32-chars-long''']
+paths = ['''.*\.test\.ts$''']
+
+[[allowlists]]
+description = "Truncated illustrative JWT prefix in API documentation (ends in ..., not a complete token)"
+regexes = ['''eyJhbGciOiJIUzI1NiIs\.\.\.''']
+paths = ['''^docs/api-conventions\.md$''']

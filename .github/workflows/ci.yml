@@ -1,0 +1,109 @@
+# Oxyide Forge — continuous validation.
+#
+# Runs every required quality/security gate on pull requests and main-branch
+# pushes by calling the canonical repository scripts (never duplicating
+# security logic in YAML), so local (`npm run security:all`) and CI behavior
+# are identical. No release power: read-only permissions, zero secrets.
+#
+# Trust boundary: triggered by `pull_request` (never `pull_request_target`),
+# so fork code runs WITHOUT access to repository secrets — and this workflow
+# uses none. Test credentials below are published fixtures, not secrets
+# (DATABASE_URL points at the ephemeral CI Postgres service; JWT_SECRET is
+# the documented test-only constant also used as the repo's test fallback).
+#
+# Third-party actions are SHA-pinned (versions in comments); see
+# (documented in docs/release-contract.md)
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DATABASE_URL: postgresql://test:test@localhost:5432/oxyide_test
+  JWT_SECRET: test-jwt-secret-key-min-32-chars-long
+  NODE_ENV: test
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: oxyide_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d oxyide_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Deterministic install
+        run: npm ci
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          GITLEAKS_VERSION=8.30.1
+          curl -sL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sL -o /tmp/gitleaks-checksums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd /tmp && grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks-checksums.txt | sha256sum -c -)
+          tar xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+
+      - name: Dependency audit (blocking, production scope)
+        run: npm run security:dependencies
+
+      - name: Secret scan (blocking)
+        run: npm run security:secrets
+
+      - name: SAST (blocking)
+        run: npm run security:sast
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests (live PostgreSQL)
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Architecture check
+        run: npm run architecture:check
+
+      - name: SBOM generate + validate
+        run: npm run security:sbom
+
+      - name: Upload SBOM artifact (main branch only)
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cyclonedx.json
+          retention-days: 30
